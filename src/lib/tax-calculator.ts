@@ -11,6 +11,9 @@ import {
 	getStatePersonalExemption,
 	getStateTaxableIncome,
 	calculateStateTax,
+	getEffectiveTaxState,
+	getReciprocityInfo,
+	hasReciprocalAgreement,
 } from './state-tax-data';
 import {
 	getLocalJurisdiction,
@@ -24,7 +27,10 @@ export type PayFrequency = 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';	e
 	hoursPerPeriod: number;
 	payFrequency: PayFrequency;
 	filingStatus: FilingStatus;
-	state: string; // two-letter state abbreviation
+	/** Home state (state of residence) */
+	homeState: string;
+	/** Work state (state where job is located) */
+	workState: string;
 	localJurisdiction: string; // local tax jurisdiction ID, empty string for none
 	additionalPretaxDeductions: number; // per period (e.g., 401k, HSA, etc.)
 	additionalPosttaxDeductions: number; // per period (e.g., charitable, garnishments)
@@ -62,6 +68,11 @@ export type PayFrequency = 'weekly' | 'biweekly' | 'semi-monthly' | 'monthly';	e
 	/** State info */
 	stateName: string;
 	stateAbbreviation: string;
+	homeState: string;
+	workState: string;
+	effectiveTaxState: string;
+	reciprocityActive: boolean;
+	reciprocityNote: string;
 
 	/** Local tax info */
 	localJurisdictionName: string;
@@ -190,17 +201,24 @@ export function calculateTax(input: CalculatorInput): CalculatorResult {
 	const additionalMedicareTaxYearly = subjectToAdditional * ADDITIONAL_MEDICARE_RATE;
 	const additionalMedicareTaxPerPeriod = additionalMedicareTaxYearly / periods;
 
-	// ── State Income Tax ───────────────────────────────────────────────────
-	const stateConfig = getStateConfig(input.state);
-	let stateName = input.state;
-	let stateAbbreviation = input.state;
+	// ── State Income Tax (with Reciprocal Agreement support) ──────────────
+	// Determine which state's tax actually applies
+	const effectiveTaxStateAbbr = getEffectiveTaxState(input.homeState, input.workState);
+	const reciprocityInfo = getReciprocityInfo(input.homeState, input.workState);
+
+	const stateConfig = getStateConfig(effectiveTaxStateAbbr);
+	let stateName = effectiveTaxStateAbbr;
+	let stateAbbreviation = effectiveTaxStateAbbr;
 	let stateTaxYearly = 0;
 	let stateTaxPerPeriod = 0;
 
 	// We'll need state taxable income for local tax calculations that are based on it
 	let stateTaxableIncomeForLocal = 0;
 
-	if (stateConfig) {
+	// Use home state config for display purposes (what the user selected)
+	const homeStateConfig = getStateConfig(input.homeState);
+
+	if (stateConfig && stateConfig.type !== 'none') {
 		stateName = stateConfig.name;
 		stateAbbreviation = stateConfig.abbreviation;
 
@@ -215,12 +233,16 @@ export function calculateTax(input: CalculatorInput): CalculatorResult {
 
 		stateTaxYearly = calculateStateTax(stateConfig, stateTaxableIncomeForLocal, input.filingStatus);
 		stateTaxPerPeriod = stateTaxYearly / periods;
+	} else if (stateConfig && stateConfig.type === 'none') {
+		stateName = stateConfig.name;
+		stateAbbreviation = stateConfig.abbreviation;
 	}
 
 	// ── Local Income Tax ────────────────────────────────────────────────────
 	let localJurisdiction = getLocalJurisdiction(input.localJurisdiction);
-	// Defensive: ignore jurisdiction if its state doesn't match the selected state
-	if (localJurisdiction && localJurisdiction.state !== input.state) {
+	// Defensive: ignore jurisdiction if its state doesn't match the work state
+	// (local taxes are typically based on where you work or live - we use the effective tax state)
+	if (localJurisdiction && localJurisdiction.state !== effectiveTaxStateAbbr) {
 		localJurisdiction = undefined;
 	}
 	let localTaxYearly = 0;
@@ -262,6 +284,9 @@ export function calculateTax(input: CalculatorInput): CalculatorResult {
 
 	const effectiveTaxRate = grossYearly > 0 ? totalDeductionsYearly / grossYearly : 0;
 
+	const homeStateConfigNice = getStateConfig(input.homeState);
+	const workStateConfigNice = getStateConfig(input.workState);
+
 	return {
 		grossPayPerPeriod: round(grossPerPeriod),
 		grossPayMonthly: round(grossMonthly),
@@ -290,6 +315,11 @@ export function calculateTax(input: CalculatorInput): CalculatorResult {
 
 		stateName,
 		stateAbbreviation,
+		homeState: homeStateConfigNice?.name ?? input.homeState,
+		workState: workStateConfigNice?.name ?? input.workState,
+		effectiveTaxState: stateName,
+		reciprocityActive: reciprocityInfo.affected && reciprocityInfo.taxState === input.homeState,
+		reciprocityNote: reciprocityInfo.message,
 		localJurisdictionName,
 	};
 }

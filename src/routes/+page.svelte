@@ -7,19 +7,24 @@
 		type FilingStatus,
 		type CalculatorResult,
 	} from '$lib/tax-calculator';
-	import { STATE_TAX_OPTIONS } from '$lib/state-tax-data';
+	import { STATE_TAX_OPTIONS, getReciprocityInfo } from '$lib/state-tax-data';
 	import { getLocalTaxOptions, getLocalJurisdiction, formatRate } from '$lib/local-tax-data';
 
 	let hourlyWage = $state(30);
 	let hoursPerPeriod = $state(40);
 	let payFrequency = $state<PayFrequency>('weekly');
 	let filingStatus = $state<FilingStatus>('single');
-	let selectedState = $state('CA');
+	let selectedHomeState = $state('CA');
+	let selectedWorkState = $state('CA');
 	let selectedLocalJurisdiction = $state('');
-	let localTaxOptions = $derived(getLocalTaxOptions(selectedState));
+	let localTaxOptions = $derived(getLocalTaxOptions(selectedWorkState));
 	let selectedLocalJurisdictionInfo = $derived.by(() => {
 		if (!selectedLocalJurisdiction) return null;
 		return getLocalJurisdiction(selectedLocalJurisdiction);
+	});
+	let reciprocityInfo = $derived.by(() => {
+		if (selectedHomeState === selectedWorkState) return null;
+		return getReciprocityInfo(selectedHomeState, selectedWorkState);
 	});
 	let additionalPretax = $state(0);
 	let additionalPosttax = $state(0);
@@ -31,7 +36,8 @@
 												hoursPerPeriod: hoursPerPeriod || 0,
 												payFrequency,
 												filingStatus,
-												state: selectedState,
+												homeState: selectedHomeState,
+												workState: selectedWorkState,
 												localJurisdiction: selectedLocalJurisdiction,
 												additionalPretaxDeductions: additionalPretax || 0,
 												additionalPosttaxDeductions: additionalPosttax || 0,
@@ -165,31 +171,79 @@
 								</p>
 						</div>
 
-						<div>
-							<label for="state" class="block text-sm font-medium text-slate-700 mb-1.5">
-								State of Residence
-							</label>
-							<select
-								id="state"
-								bind:value={selectedState}
-								onchange={() => {
-									showResults = false;
-									selectedLocalJurisdiction = '';
-								}}
-								class="block w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors text-sm"
-							>
-								{#each STATE_TAX_OPTIONS as st}
-									<option value={st.value}>{st.label}</option>
-								{/each}
-							</select>													<p class="mt-1 text-xs text-slate-400">
-														State income tax is calculated using 2026 rates and brackets. Add a local jurisdiction below if applicable.
-													</p>
-												</div>
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+							<div>
+								<label for="homeState" class="block text-sm font-medium text-slate-700 mb-1.5">
+									Home State <span class="text-slate-400 font-normal">(residence)</span>
+								</label>
+								<select
+									id="homeState"
+									bind:value={selectedHomeState}
+									onchange={() => {
+										showResults = false;
+										selectedLocalJurisdiction = '';
+									}}
+									class="block w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors text-sm"
+								>
+									{#each STATE_TAX_OPTIONS as st}
+										<option value={st.value}>{st.label}</option>
+									{/each}
+								</select>
+								<p class="mt-1 text-xs text-slate-400">
+									Where you live
+								</p>
+							</div>
+							<div>
+								<label for="workState" class="block text-sm font-medium text-slate-700 mb-1.5">
+									Work State <span class="text-slate-400 font-normal">(job location)</span>
+								</label>
+								<select
+									id="workState"
+									bind:value={selectedWorkState}
+									onchange={() => {
+										showResults = false;
+										selectedLocalJurisdiction = '';
+									}}
+									class="block w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors text-sm"
+								>
+									{#each STATE_TAX_OPTIONS as st}
+										<option value={st.value}>{st.label}</option>
+									{/each}
+								</select>
+								<p class="mt-1 text-xs text-slate-400">
+									Where you physically work
+								</p>
+							</div>
+						</div>
+
+						{#if reciprocityInfo}
+							<div class="p-3 rounded-xl {reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState ? 'bg-blue-50 border border-blue-200' : 'bg-amber-50 border border-amber-200'} text-xs mt-3">
+								<div class="flex items-start gap-2">
+									<svg class="w-4 h-4 shrink-0 mt-0.5 {reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState ? 'text-blue-500' : 'text-amber-500'}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+										{#if reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState}
+											<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+										{:else}
+											<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+										{/if}
+									</svg>
+									<div>
+										<p class="font-medium {reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState ? 'text-blue-700' : 'text-amber-700'}">
+											{reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState
+												? 'Reciprocal Agreement Active'
+												: 'No Reciprocal Agreement'}
+										</p>
+										<p class="mt-1 {reciprocityInfo.affected && reciprocityInfo.taxState === selectedHomeState ? 'text-blue-600' : 'text-amber-600'}">
+											{reciprocityInfo.message}
+										</p>
+									</div>
+								</div>
+							</div>
+						{/if}
 
 						{#if localTaxOptions.length > 1}
 							<div>
 								<label for="localJurisdiction" class="block text-sm font-medium text-slate-700 mb-1.5">
-									Local / City Tax Jurisdiction
+									Local / City Tax Jurisdiction <span class="text-slate-400 font-normal">(based on work state)</span>
 								</label>
 								<select
 									id="localJurisdiction"

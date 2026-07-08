@@ -948,6 +948,94 @@ function calculateGraduatedTax(income: number, brackets: StateBracket[]): number
 	return tax;
 }
 
+// ─── Reciprocal Tax Agreements ──────────────────────────────────────────────
+//
+// These agreements allow residents of one state to work in another state
+// and only pay income tax to their home state (not the work state).
+// The key rule: if the WORK state has a reciprocal agreement with the HOME state,
+// then you pay tax to your HOME state and are exempt from the WORK state's tax.
+//
+// Map: work state abbreviation → array of reciprocal home state abbreviations
+// Source: https://onpay.com/insights/employers-guide-to-state-tax-reciprocity-agreements/
+
+export const RECIPROCAL_AGREEMENTS: Record<string, string[]> = {
+	'AZ': ['CA', 'IN', 'OR', 'VA'],
+	'DC': ['*'], // DC has reciprocity with ALL states for non-residents
+	'IL': ['IA', 'KY', 'MI', 'WI'],
+	'IN': ['KY', 'MI', 'OH', 'PA', 'WI'],
+	'IA': ['IL'],
+	'KY': ['IL', 'IN', 'MI', 'WV', 'VA'],
+	'MD': ['DC', 'PA', 'VA', 'WV'],
+	'MI': ['IL', 'IN', 'KY', 'MN', 'OH', 'WI'],
+	'MN': ['MI', 'ND'],
+	'MT': ['ND'],
+	'NJ': ['PA'],
+	'ND': ['MN', 'MT'],
+	'OH': ['IN', 'KY', 'MI', 'PA', 'WV'],
+	'PA': ['IN', 'MD', 'NJ', 'OH', 'VA', 'WV'],
+	'VA': ['DC', 'KY', 'MD', 'PA', 'WV'],
+	'WV': ['KY', 'MD', 'OH', 'PA', 'VA'],
+	'WI': ['IL', 'IN', 'KY', 'MI'],
+};
+
+/**
+ * Determine whether a reciprocal agreement exists between a work state and home state.
+ * If the work state has reciprocity with the home state, the worker pays tax only
+ * to their home state (i.e., work state does not withhold).
+ */
+export function hasReciprocalAgreement(workState: string, homeState: string): boolean {
+	const agreements = RECIPROCAL_AGREEMENTS[workState];
+	if (!agreements) return false;
+	// '*' means the work state has reciprocity with all states (e.g. DC)
+	return agreements.includes('*') || agreements.includes(homeState);
+}
+
+/**
+ * Given a home state and work state, return which state's tax rules should apply.
+ * If they're the same, it's straightforward. If they differ and a reciprocal agreement
+ * exists (work is reciprocal with home), use the home state. Otherwise, use the work state.
+ */
+export function getEffectiveTaxState(homeState: string, workState: string): string {
+	if (homeState === workState) return homeState;
+	// If work state has a reciprocal agreement with home state, pay home state tax
+	if (hasReciprocalAgreement(workState, homeState)) {
+		return homeState;
+	}
+	// Otherwise, pay tax to the work state (and home state typically offers a credit)
+	return workState;
+}
+
+/**
+ * Get human-readable information about reciprocity for display purposes.
+ */
+export function getReciprocityInfo(homeState: string, workState: string): {
+	affected: boolean;
+	taxState: string;
+	message: string;
+} {
+	if (homeState === workState) {
+		return {
+			affected: false,
+			taxState: homeState,
+			message: '',
+		};
+	}
+
+	if (hasReciprocalAgreement(workState, homeState)) {
+		return {
+			affected: true,
+			taxState: homeState,
+			message: `Reciprocal agreement: ${homeState} residents working in ${workState} pay only ${homeState} state income tax. No withholding for ${workState}.`,
+		};
+	}
+
+	return {
+		affected: true,
+		taxState: workState,
+		message: `No reciprocal agreement between ${homeState} and ${workState}. You'll pay ${workState} state income tax. You may be eligible for a tax credit in ${homeState} to avoid double taxation.`,
+	};
+}
+
 // ─── Formatted list for UI ────────────────────────────────────────────────────
 
 export const STATE_TAX_OPTIONS: Array<{ value: string; label: string }> =
